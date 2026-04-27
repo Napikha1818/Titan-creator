@@ -112,14 +112,19 @@ class SpeechSynthesizer:
     ) -> Path:
         """Synthesize one segment fitted precisely to target_duration.
 
-        Bidirectional two-pass strategy:
-        1. Generate at natural speed → measure actual duration.
-        2. Calculate exact rate = actual / target.
-        3. If too SHORT: re-generate SLOWER so speech fills the full duration.
-        4. If too LONG: re-generate FASTER so speech fits within duration.
-        5. If still off after pass 2: Rubberband fine-tune.
-        6. Final fit: pad/trim to exact target_duration.
+        Natural speed + smart pause strategy:
+        1. Generate at natural speed (rate 1.0) — best prosody.
+        2. If TTS shorter than target:
+           - Small gap (< 30% of target): keep natural speed, pad silence.
+             This sounds like a natural pause between phrases.
+           - Large gap (>= 30%): slow down slightly (rate 0.85-0.95) to
+             partially fill, then pad the rest. Never go below 0.8x.
+        3. If TTS longer than target: speed up via rate adjustment.
+        4. Final fit: always pad/trim to exact target_duration.
         """
+        # Threshold: if TTS fills at least 70% of target, use natural speed
+        _NATURAL_THRESHOLD = 0.70
+
         try:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 tmp_path = Path(tmp_dir)
@@ -141,41 +146,40 @@ class SpeechSynthesizer:
                 fitted_wav = tmp_path / "fitted.wav"
 
                 if abs(actual_duration - target_duration) <= _DURATION_TOLERANCE:
-                    # Already close enough
+                    # Already close enough — use as-is
                     fitted_wav = raw_wav
 
+                elif ratio >= _NATURAL_THRESHOLD and ratio < 1.0:
+                    # TTS shorter but fills >= 70% of slot.
+                    # Keep natural speed — the silence pad at the end sounds
+                    # like a natural pause before the next phrase.
+                    fitted_wav = raw_wav
+
+                elif ratio < _NATURAL_THRESHOLD and ratio >= _GOOGLE_MIN_RATE:
+                    # TTS much shorter (fills < 70%) — slow down partially.
+                    # Target: fill ~85% of the slot, leave 15% as natural pause.
+                    target_fill = 0.85
+                    desired_duration = target_duration * target_fill
+                    slow_rate = max(actual_duration / desired_duration, _GOOGLE_MIN_RATE)
+                    slow_rate = min(slow_rate, 1.0)  # never speed up here
+
+                    slow_wav = tmp_path / "slow.wav"
+                    if self.engine == "google":
+                        self._google_tts(text, slow_wav, speaking_rate=slow_rate)
+                    else:
+                        rate_pct = max(int((slow_rate - 1.0) * 100), -50)
+                        await self._edge_tts(text, slow_wav, rate_pct=rate_pct)
+
+                    fitted_wav = slow_wav
+
                 elif ratio < _GOOGLE_MIN_RATE:
-                    # Extremely short — slow down to min rate, pad the rest
+                    # Extremely short — slow to minimum, pad the rest
                     slow_wav = tmp_path / "slow.wav"
                     if self.engine == "google":
                         self._google_tts(text, slow_wav, speaking_rate=_GOOGLE_MIN_RATE)
                     else:
                         await self._edge_tts(text, slow_wav, rate_pct=-50)
                     fitted_wav = slow_wav
-
-                elif ratio < 1.0:
-                    # TTS shorter than target — SLOW DOWN to fill duration
-                    # rate < 1.0 = slower speech in Google TTS
-                    slow_rate = max(ratio * 0.95, _GOOGLE_MIN_RATE)  # slightly slower than exact
-                    slow_wav = tmp_path / "slow.wav"
-
-                    if self.engine == "google":
-                        self._google_tts(text, slow_wav, speaking_rate=slow_rate)
-                    else:
-                        rate_pct = max(int((slow_rate - 1.0) * 100) - 3, -50)
-                        await self._edge_tts(text, slow_wav, rate_pct=rate_pct)
-
-                    slow_dur = self._get_audio_duration(slow_wav)
-                    slow_ratio = slow_dur / target_duration
-
-                    if abs(slow_dur - target_duration) <= _DURATION_TOLERANCE:
-                        fitted_wav = slow_wav
-                    elif slow_ratio > 1.0 and slow_ratio <= _RUBBERBAND_MAX_RATIO:
-                        # Overshot slightly — stretch to fit
-                        self._time_stretch(slow_wav, fitted_wav, slow_ratio)
-                    else:
-                        # Use the slower version, pad/trim will handle the rest
-                        fitted_wav = slow_wav
 
                 elif ratio <= _GOOGLE_MAX_RATE:
                     # TTS longer than target — SPEED UP

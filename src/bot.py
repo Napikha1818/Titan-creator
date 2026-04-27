@@ -193,38 +193,43 @@ class TelegramBotHandler:
 
         Sends as document if > 50MB (Telegram allows up to 2GB for documents via bot).
         Sends as video if <= 50MB.
+        Retries once on timeout.
         """
         file_size = video_path.stat().st_size
 
-        try:
-            if file_size > self.config.telegram_file_limit:
-                # Send as document (supports up to 2GB)
-                with open(video_path, "rb") as f:
-                    await context.bot.send_document(
-                        chat_id=chat_id,
-                        document=f,
-                        caption="✅ Video berhasil diterjemahkan! (dikirim sebagai file karena ukuran > 50MB)",
-                        read_timeout=300,
-                        write_timeout=300,
-                        connect_timeout=60,
-                    )
-            else:
-                with open(video_path, "rb") as f:
-                    await context.bot.send_video(
-                        chat_id=chat_id,
-                        video=f,
-                        caption="✅ Video berhasil diterjemahkan!",
-                        read_timeout=300,
-                        write_timeout=300,
-                        connect_timeout=60,
-                    )
-        except Exception as exc:
-            logger.error("Failed to send video via Telegram: %s", exc)
-            await self.send_error(
-                chat_id,
-                f"Gagal mengirim video: {exc}",
-                context,
-            )
+        for attempt in range(2):  # retry once on timeout
+            try:
+                if file_size > self.config.telegram_file_limit:
+                    with open(video_path, "rb") as f:
+                        await context.bot.send_document(
+                            chat_id=chat_id,
+                            document=f,
+                            caption="✅ Video berhasil diterjemahkan! (dikirim sebagai file karena ukuran > 50MB)",
+                            read_timeout=600,
+                            write_timeout=600,
+                            connect_timeout=120,
+                        )
+                else:
+                    with open(video_path, "rb") as f:
+                        await context.bot.send_video(
+                            chat_id=chat_id,
+                            video=f,
+                            caption="✅ Video berhasil diterjemahkan!",
+                            read_timeout=600,
+                            write_timeout=600,
+                            connect_timeout=120,
+                        )
+                return  # success
+            except Exception as exc:
+                if attempt == 0 and "Timed out" in str(exc):
+                    logger.warning("Send attempt %d timed out, retrying...", attempt + 1)
+                    continue
+                logger.error("Failed to send video via Telegram: %s", exc)
+                await self.send_error(
+                    chat_id,
+                    f"Gagal mengirim video: {exc}",
+                    context,
+                )
 
     async def send_error(
         self,

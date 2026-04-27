@@ -157,31 +157,61 @@ class ChessTranslator:
         """Add punctuation to translated text for natural TTS prosody.
 
         Rules:
-        - Add comma before conjunctions (and, but, so, now, then, because)
-        - Add period at end if missing
-        - Don't double-up punctuation
+        1. Add comma before conjunctions (and, but, so, now, then, because, etc.)
+        2. Add comma after chess notations followed by more words (e.g., "e4, the position")
+        3. Add comma every ~6 words if no punctuation exists (natural breath point)
+        4. Add period at end if missing
         """
         if not text or not text.strip():
             return text
 
         result = text.strip()
 
-        # Add comma before conjunctions if not already punctuated
+        # 1. Comma before conjunctions
         conjunctions = (
             "and now", "but now", "and then", "so now", "and so",
-            "but", "so", "now", "then", "because", "however", "also", "after that",
+            "but", "so", "now", "then", "because", "however", "also",
+            "after that", "while", "since", "where", "which", "that means",
+            "this means", "the position", "the idea", "the plan", "the threat",
+            "white", "black",
         )
-        for conj in conjunctions:
-            # Match: word boundary + conjunction, not preceded by punctuation
+        for conj in sorted(conjunctions, key=len, reverse=True):
             pattern = re.compile(
-                r'(?<![,;.!?\s])(\s+)(' + re.escape(conj) + r')\b',
+                r'(?<![,;.!?])(\s+)(' + re.escape(conj) + r')\b',
                 re.IGNORECASE,
             )
             result = pattern.sub(r', \2', result)
 
-        # Clean up double commas or space-comma
+        # 2. Comma after chess notation patterns (e.g., "e4", "Nf3", "d5")
+        # Match: chess notation followed by a space and a regular word
+        result = re.sub(
+            r'\b([a-hA-H][1-8]|[KQRBN][a-h]?[1-8]?[x]?[a-h][1-8])\s+(?=[a-z])',
+            r'\1, ',
+            result,
+        )
+
+        # 3. Insert comma every ~6 words if a long stretch has no punctuation
+        words = result.split()
+        if len(words) > 8:
+            new_words: list[str] = []
+            since_punct = 0
+            for w in words:
+                new_words.append(w)
+                if any(c in w for c in ',.;!?'):
+                    since_punct = 0
+                else:
+                    since_punct += 1
+                # Insert comma after ~6 words without punctuation
+                if since_punct >= 6:
+                    # Add comma to the last word
+                    new_words[-1] = new_words[-1] + ','
+                    since_punct = 0
+            result = ' '.join(new_words)
+
+        # Clean up double commas, space-comma, comma-comma
         result = re.sub(r',\s*,', ',', result)
         result = re.sub(r'\s+,', ',', result)
+        result = re.sub(r',+', ',', result)
 
         # Ensure ends with punctuation
         if result and result[-1] not in '.!?':

@@ -96,6 +96,9 @@ class ChessTranslator:
                 result = result.replace(placeholder.lower(), english_term)
                 result = result.replace(placeholder.capitalize(), english_term)
 
+            # Add punctuation for natural TTS prosody
+            result = self._add_punctuation(result)
+
             return result
         except TranslationError:
             raise
@@ -147,4 +150,41 @@ class ChessTranslator:
                 r"\b" + re.escape(term) + r"\b", re.IGNORECASE
             )
             result = pattern.sub(placeholder, result)
+        return result
+
+    @staticmethod
+    def _add_punctuation(text: str) -> str:
+        """Add punctuation to translated text for natural TTS prosody.
+
+        Rules:
+        - Add comma before conjunctions (and, but, so, now, then, because)
+        - Add period at end if missing
+        - Don't double-up punctuation
+        """
+        if not text or not text.strip():
+            return text
+
+        result = text.strip()
+
+        # Add comma before conjunctions if not already punctuated
+        conjunctions = (
+            "and now", "but now", "and then", "so now", "and so",
+            "but", "so", "now", "then", "because", "however", "also", "after that",
+        )
+        for conj in conjunctions:
+            # Match: word boundary + conjunction, not preceded by punctuation
+            pattern = re.compile(
+                r'(?<![,;.!?\s])(\s+)(' + re.escape(conj) + r')\b',
+                re.IGNORECASE,
+            )
+            result = pattern.sub(r', \2', result)
+
+        # Clean up double commas or space-comma
+        result = re.sub(r',\s*,', ',', result)
+        result = re.sub(r'\s+,', ',', result)
+
+        # Ensure ends with punctuation
+        if result and result[-1] not in '.!?':
+            result += '.'
+
         return result

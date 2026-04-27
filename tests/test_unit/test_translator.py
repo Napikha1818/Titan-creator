@@ -83,7 +83,8 @@ class TestTranslateText:
 
         with patch.object(translator, "_deep_translate", return_value="Hello world"):
             result = translator.translate_text("Halo dunia")
-            assert result == "Hello world"
+            # Punctuation post-processing adds period if missing
+            assert result == "Hello world."
 
     def test_translation_failure_raises_error(self):
         translator = ChessTranslator(api_key=None)
@@ -114,7 +115,7 @@ class TestTranslateText:
         with patch.object(translator, "_google_cloud_translate", return_value="translated") as mock_gcp:
             result = translator.translate_text("teks")
             mock_gcp.assert_called_once()
-            assert result == "translated"
+            assert result == "translated."
 
 
 class TestTranslateSegments:

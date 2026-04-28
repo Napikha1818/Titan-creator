@@ -15,6 +15,7 @@ class AppConfig:
     google_drive_folder_id: str | None = None
     google_tts_api_key: str | None = None
     google_translate_api_key: str | None = None
+    gemini_api_key: str | None = None
     whisper_model: str = "small"
     whisper_device: str = "cpu"
     tts_voice: str = "en-US-Neural2-D"  # Google Cloud TTS Neural2 male voice
@@ -150,6 +151,7 @@ def load_config() -> AppConfig:
         google_drive_folder_id=google_drive_folder_id,
         google_tts_api_key=os.environ.get("GOOGLE_TTS_API_KEY"),
         google_translate_api_key=os.environ.get("GOOGLE_TRANSLATE_API_KEY"),
+        gemini_api_key=os.environ.get("GEMINI_API_KEY"),
         whisper_model=os.environ.get("WHISPER_MODEL", "small"),
         whisper_device=os.environ.get("WHISPER_DEVICE", "cpu"),
         tts_voice=os.environ.get("TTS_VOICE", "en-US-Neural2-D"),

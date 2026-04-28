@@ -30,12 +30,20 @@ class ChessTranslator:
 
     CHESS_TERMS: dict[str, str] = dict(CHESS_TERM_MAPPING)
 
-    def __init__(self, api_key: str | None = None) -> None:
+    def __init__(
+        self,
+        api_key: str | None = None,
+        gemini_api_key: str | None = None,
+    ) -> None:
         self.api_key = api_key or os.environ.get("GOOGLE_TRANSLATE_API_KEY")
+        self.gemini_api_key = gemini_api_key or os.environ.get("GEMINI_API_KEY")
         self._use_gcp = bool(self.api_key)
+        self._use_gemini = bool(self.gemini_api_key)
 
         if not self._use_gcp:
             logger.warning("No GOOGLE_TRANSLATE_API_KEY, falling back to deep-translator")
+        if not self._use_gemini:
+            logger.warning("No GEMINI_API_KEY, punctuation will use simple rules")
 
         # Sort terms by length (longest first) so multi-word terms like
         # "skak mat" are matched before single-word terms like "skak".
@@ -152,69 +160,67 @@ class ChessTranslator:
             result = pattern.sub(placeholder, result)
         return result
 
-    @staticmethod
-    def _add_punctuation(text: str) -> str:
-        """Add punctuation to translated text for natural TTS prosody.
+    def _add_punctuation(self, text: str) -> str:
+        """Add natural punctuation using Gemini AI, with simple fallback.
 
-        Rules:
-        1. Add comma before conjunctions (and, but, so, now, then, because, etc.)
-        2. Add comma after chess notations followed by more words (e.g., "e4, the position")
-        3. Add comma every ~6 words if no punctuation exists (natural breath point)
-        4. Add period at end if missing
+        Gemini understands context and places commas/periods accurately.
+        Falls back to basic rules if Gemini unavailable.
         """
         if not text or not text.strip():
             return text
 
+        if self._use_gemini:
+            try:
+                return self._gemini_punctuate(text)
+            except Exception as e:
+                logger.warning("Gemini punctuation failed (%s), using fallback", e)
+
+        return self._simple_punctuate(text)
+
+    def _gemini_punctuate(self, text: str) -> str:
+        """Use Gemini to add natural punctuation for TTS."""
+        _GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+
+        prompt = (
+            "Add natural punctuation (commas, periods, question marks) to this chess commentary text "
+            "for text-to-speech reading. Rules:\n"
+            "- Add commas where a speaker would naturally pause\n"
+            "- Add periods at sentence boundaries\n"
+            "- Do NOT change, add, or remove any words\n"
+            "- Return ONLY the punctuated text, nothing else\n\n"
+            f"Text: {text}"
+        )
+
+        payload = json.dumps({
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "temperature": 0.1,
+                "maxOutputTokens": 256,
+            },
+        }).encode("utf-8")
+
+        url = f"{_GEMINI_URL}?key={self.gemini_api_key}"
+        req = Request(url, data=payload, method="POST")
+        req.add_header("Content-Type", "application/json")
+
+        with urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+
+        candidates = result.get("candidates", [])
+        if candidates:
+            parts = candidates[0].get("content", {}).get("parts", [])
+            if parts:
+                punctuated = parts[0].get("text", "").strip()
+                # Sanity check: Gemini should not change words significantly
+                if punctuated and len(punctuated) < len(text) * 2:
+                    return punctuated
+
+        return self._simple_punctuate(text)
+
+    @staticmethod
+    def _simple_punctuate(text: str) -> str:
+        """Simple fallback: just ensure text ends with a period."""
         result = text.strip()
-
-        # 1. Comma before conjunctions
-        conjunctions = (
-            "and now", "but now", "and then", "so now", "and so",
-            "but", "so", "now", "then", "because", "however", "also",
-            "after that", "while", "since", "where", "which", "that means",
-            "this means", "the position", "the idea", "the plan", "the threat",
-            "white", "black",
-        )
-        for conj in sorted(conjunctions, key=len, reverse=True):
-            pattern = re.compile(
-                r'(?<![,;.!?])(\s+)(' + re.escape(conj) + r')\b',
-                re.IGNORECASE,
-            )
-            result = pattern.sub(r', \2', result)
-
-        # 2. Comma after chess notation patterns (e.g., "e4", "Nf3", "d5")
-        # Match: chess notation followed by a space and a regular word
-        result = re.sub(
-            r'\b([a-hA-H][1-8]|[KQRBN][a-h]?[1-8]?[x]?[a-h][1-8])\s+(?=[a-z])',
-            r'\1, ',
-            result,
-        )
-
-        # 3. Insert comma every ~6 words if a long stretch has no punctuation
-        words = result.split()
-        if len(words) > 8:
-            new_words: list[str] = []
-            since_punct = 0
-            for w in words:
-                new_words.append(w)
-                if any(c in w for c in ',.;!?'):
-                    since_punct = 0
-                else:
-                    since_punct += 1
-                # Insert comma after ~6 words without punctuation
-                if since_punct >= 6:
-                    # Add comma to the last word
-                    new_words[-1] = new_words[-1] + ','
-                    since_punct = 0
-            result = ' '.join(new_words)
-
-        # Clean up double commas, space-comma, comma-comma
-        result = re.sub(r',\s*,', ',', result)
-        result = re.sub(r'\s+,', ',', result)
-        result = re.sub(r',+', ',', result)
-
-        # Ensure ends with punctuation
         if result and result[-1] not in '.!?':
             result += '.'
-
         return result

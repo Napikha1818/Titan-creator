@@ -202,7 +202,10 @@ class PipelineProcessor:
         # Stage 3: Translation
         await self._report_progress(PipelineStage.TRANSLATION)
         try:
-            translator = ChessTranslator(api_key=self.config.google_translate_api_key)
+            translator = ChessTranslator(
+                api_key=self.config.google_translate_api_key,
+                gemini_api_key=self.config.gemini_api_key,
+            )
             translated_segments = translator.translate_segments(segments)
         except TranslationError as e:
             raise PipelineError(str(e), stage=PipelineStage.TRANSLATION) from e

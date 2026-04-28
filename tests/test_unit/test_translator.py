@@ -79,15 +79,15 @@ class TestTranslateText:
 
     def test_successful_translation_with_deep_translator(self):
         """Test translation via deep-translator fallback (no API key)."""
-        translator = ChessTranslator(api_key=None)
+        translator = ChessTranslator(api_key=None, gemini_api_key=None)
 
         with patch.object(translator, "_deep_translate", return_value="Hello world"):
             result = translator.translate_text("Halo dunia")
-            # Punctuation post-processing adds period if missing
+            # Simple punctuate just adds period at end
             assert result == "Hello world."
 
     def test_translation_failure_raises_error(self):
-        translator = ChessTranslator(api_key=None)
+        translator = ChessTranslator(api_key=None, gemini_api_key=None)
 
         with patch.object(translator, "_deep_translate", side_effect=Exception("API error")):
             with pytest.raises(TranslationError, match="Failed to translate text"):
@@ -96,7 +96,7 @@ class TestTranslateText:
     def test_chess_terms_preserved_in_translation(self):
         """Chess terms should be replaced with placeholders before translation,
         then restored with English terms after."""
-        translator = ChessTranslator(api_key=None)
+        translator = ChessTranslator(api_key=None, gemini_api_key=None)
 
         placeholder_kuda = translator._term_to_placeholder["kuda"]
 
@@ -110,7 +110,7 @@ class TestTranslateText:
 
     def test_gcp_translate_called_when_api_key_set(self):
         """When API key is set, should use Google Cloud Translation API."""
-        translator = ChessTranslator(api_key="test-key")
+        translator = ChessTranslator(api_key="test-key", gemini_api_key=None)
 
         with patch.object(translator, "_google_cloud_translate", return_value="translated") as mock_gcp:
             result = translator.translate_text("teks")
